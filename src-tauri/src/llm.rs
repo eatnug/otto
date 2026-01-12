@@ -48,6 +48,11 @@ Response: "#,
     )
 }
 
+/// Raw LLM call - returns the response text directly
+pub async fn call_ollama_raw(prompt: &str) -> Result<String, String> {
+    call_ollama(prompt).await
+}
+
 async fn call_ollama(prompt: &str) -> Result<String, String> {
     let request = OllamaRequest {
         model: LLM_MODEL.to_string(),

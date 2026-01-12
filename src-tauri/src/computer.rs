@@ -4,9 +4,84 @@ use core_graphics::event::{
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
+use std::fs;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+
+/// Get list of installed applications
+pub fn get_installed_apps() -> Vec<String> {
+    let mut apps = Vec::new();
+
+    // Check /Applications
+    if let Ok(entries) = fs::read_dir("/Applications") {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".app") {
+                    apps.push(name.trim_end_matches(".app").to_string());
+                }
+            }
+        }
+    }
+
+    // Check ~/Applications
+    if let Some(home) = std::env::var_os("HOME") {
+        let user_apps = std::path::Path::new(&home).join("Applications");
+        if let Ok(entries) = fs::read_dir(user_apps) {
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with(".app") {
+                        apps.push(name.trim_end_matches(".app").to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Check /System/Applications
+    if let Ok(entries) = fs::read_dir("/System/Applications") {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.ends_with(".app") {
+                    apps.push(name.trim_end_matches(".app").to_string());
+                }
+            }
+        }
+    }
+
+    apps.sort();
+    apps.dedup();
+    apps
+}
+
+/// Find best matching app name from installed apps
+pub fn find_app(query: &str) -> Option<String> {
+    let apps = get_installed_apps();
+    let query_lower = query.to_lowercase();
+
+    // Exact match (case insensitive)
+    for app in &apps {
+        if app.to_lowercase() == query_lower {
+            return Some(app.clone());
+        }
+    }
+
+    // Contains match
+    for app in &apps {
+        if app.to_lowercase().contains(&query_lower) {
+            return Some(app.clone());
+        }
+    }
+
+    // Query contains app name
+    for app in &apps {
+        if query_lower.contains(&app.to_lowercase()) {
+            return Some(app.clone());
+        }
+    }
+
+    None
+}
 
 pub fn open_app(app_name: &str) -> Result<(), String> {
     println!("[DEBUG] open_app: open -a {}", app_name);
