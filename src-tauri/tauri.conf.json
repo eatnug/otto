@@ -14,15 +14,15 @@
       {
         "label": "main",
         "title": "Otto",
-        "width": 680,
-        "height": 88,
+        "width": 900,
+        "height": 600,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "center": true,
         "visible": false,
-        "resizable": false
+        "resizable": true
       }
     ],
     "security": {

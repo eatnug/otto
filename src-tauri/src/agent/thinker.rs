@@ -1,7 +1,8 @@
 use crate::computer;
 use crate::llm;
-use crate::types::{ActionParams, ActionResult, ActionType, AtomicAction, Goal, ScreenState};
+use crate::types::{ActionParams, ActionResult, ActionType, AtomicAction, Goal, LlmCallType, ScreenState};
 use regex::Regex;
+use tauri::AppHandle;
 
 pub struct Thinker;
 
@@ -10,28 +11,133 @@ impl Thinker {
         Self
     }
 
-    /// Decide the next atomic action based on goal and current screen state
-    pub async fn decide_action(
+    /// Decide action WITHOUT seeing the screen (first pass)
+    /// Returns an action that may or may not need coordinates
+    pub async fn decide_action_blind(
         &self,
+        app_handle: &AppHandle,
         goal: &Goal,
-        screen: &ScreenState,
-        history: &[ActionResult],
     ) -> Result<AtomicAction, String> {
-        println!("[THINKER] Deciding action for goal: \"{}\"", goal.description);
-        println!("[THINKER] Screen context: \"{}\"", screen.description.chars().take(100).collect::<String>());
+        println!("[THINKER] Deciding action BLIND for goal: \"{}\"", goal.description);
 
-        // Build recent actions summary
-        let recent_actions = format_recent_actions(history);
+        let prompt = format!(
+            r#"Goal: {}
 
-        let prompt = super::prompts::action_decision_prompt(
-            &goal.description,
-            &goal.success_criteria,
-            &screen.description,
-            &recent_actions,
+Pick ONE action to achieve this goal.
+Output ONLY the action, nothing else.
+
+Actions:
+- open APP_NAME (to open an app)
+- click ELEMENT_DESCRIPTION (to click something - I'll find it on screen)
+- type "TEXT" (to type text)
+- key KEY (e.g., key return, key CMD+L)
+- wait MS (to wait)
+
+Examples:
+- Open Safari: open Safari
+- Click submit button: click submit button
+- Type hello: type "hello"
+- Press Cmd+L: key CMD+L
+- Check messages: open Messages
+
+Action:"#,
+            goal.description
         );
 
-        println!("[THINKER] Calling LLM (non-deterministic)...");
-        let response = llm::call_ollama_raw(&prompt).await?;
+        println!("[THINKER] Calling LLM (blind)...");
+        let response = llm::call_ollama_with_debug(app_handle, &prompt, LlmCallType::ActionDecision).await?;
+        println!("[THINKER] LLM raw response: \"{}\"", response.lines().next().unwrap_or(""));
+
+        let action = parse_action_blind(&response, goal)?;
+        println!("[THINKER] Parsed action: {:?} -> {:?}", action.action_type, action.params);
+
+        Ok(action)
+    }
+
+    /// Decide action WITH screen info (for actions that need coordinates)
+    pub async fn decide_action_with_screen(
+        &self,
+        app_handle: &AppHandle,
+        goal: &Goal,
+        element_to_find: &str,
+        screen: &ScreenState,
+    ) -> Result<AtomicAction, String> {
+        println!("[THINKER] Finding \"{}\" on screen", element_to_find);
+        println!("[THINKER] UI elements detected: {}", screen.ui_elements.len());
+
+        let ui_elements_str = screen.format_ui_elements();
+
+        let prompt = format!(
+            r#"I need to click: "{}"
+
+UI Elements on screen:
+{}
+
+Find the best matching element and output ONLY: click X Y
+Use the CENTER coordinates.
+
+If no good match, output: not_found
+
+Answer:"#,
+            element_to_find,
+            ui_elements_str
+        );
+
+        println!("[THINKER] Calling LLM (with screen)...");
+        let response = llm::call_ollama_with_debug(app_handle, &prompt, LlmCallType::ActionDecision).await?;
+        println!("[THINKER] LLM raw response: \"{}\"", response.lines().next().unwrap_or(""));
+
+        let action = parse_click_action(&response, goal, element_to_find)?;
+        println!("[THINKER] Parsed action: {:?} -> {:?}", action.action_type, action.params);
+
+        Ok(action)
+    }
+
+    /// Legacy: Decide action with full screen state (for complex scenarios)
+    pub async fn decide_action(
+        &self,
+        app_handle: &AppHandle,
+        goal: &Goal,
+        screen: &ScreenState,
+        _history: &[ActionResult],
+    ) -> Result<AtomicAction, String> {
+        println!("[THINKER] Deciding action for goal: \"{}\"", goal.description);
+        println!("[THINKER] UI elements detected: {}", screen.ui_elements.len());
+
+        let ui_elements_str = screen.format_ui_elements();
+
+        let prompt = format!(
+            r#"Goal: {}
+
+UI Elements on screen (with bounding boxes and center points):
+{}
+
+Active app: {}
+
+Pick ONE action to achieve the goal.
+Output ONLY the action, nothing else.
+
+Actions:
+- open APP_NAME (to open an app)
+- click X Y (use CENTER coordinates from the list to click an element)
+- type "TEXT" (to type text)
+- key KEY (e.g., key return, key CMD+L)
+- wait MS (to wait)
+
+Examples:
+- To click a button with center at (450, 320): click 450 320
+- To open Slack: open Slack
+- To type hello: type "hello"
+- To press Enter: key return
+
+Action:"#,
+            goal.description,
+            ui_elements_str,
+            screen.active_app.as_deref().unwrap_or("Unknown")
+        );
+
+        println!("[THINKER] Calling LLM...");
+        let response = llm::call_ollama_with_debug(app_handle, &prompt, LlmCallType::ActionDecision).await?;
         println!("[THINKER] LLM raw response: \"{}\"", response.lines().next().unwrap_or(""));
 
         let action = parse_action(&response, goal)?;
@@ -61,6 +167,125 @@ fn format_recent_actions(history: &[ActionResult]) -> String {
         .collect();
 
     recent.join(", ")
+}
+
+/// Parse LLM response from blind decision (no screen info)
+/// Click actions will have element descriptions instead of coordinates
+fn parse_action_blind(response: &str, goal: &Goal) -> Result<AtomicAction, String> {
+    let line = response.lines().next().unwrap_or("").trim().to_lowercase();
+    let original_line = response.lines().next().unwrap_or("").trim();
+
+    // Parse: open APP
+    if let Some(caps) = Regex::new(r"^open\s+(.+)$").ok().and_then(|re| re.captures(&line)) {
+        let raw_app = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        let app = normalize_app_name(raw_app);
+        return Ok(AtomicAction::new(
+            ActionType::OpenApp,
+            ActionParams::OpenApp { app_name: app.clone() },
+            format!("Opening {} for: {}", app, goal.description),
+        ));
+    }
+
+    // Parse: click ELEMENT_DESCRIPTION (not coordinates)
+    // This will need screen observation to resolve to coordinates
+    if let Some(caps) = Regex::new(r"^click\s+(.+)$").ok().and_then(|re| re.captures(&line)) {
+        let element = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        // Check if it's coordinates (digits only) or element description
+        if Regex::new(r"^\d+\s+\d+$").ok().map(|re| re.is_match(element)).unwrap_or(false) {
+            // It's coordinates - parse as regular click
+            let parts: Vec<&str> = element.split_whitespace().collect();
+            let x: i32 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let y: i32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            return Ok(AtomicAction::new(
+                ActionType::MouseClick,
+                ActionParams::MouseClick { x, y, button: None },
+                format!("Clicking at ({}, {}) for: {}", x, y, goal.description),
+            ));
+        }
+        // It's an element description - use FindAndClick
+        return Ok(AtomicAction::new(
+            ActionType::FindAndClick,
+            ActionParams::FindAndClick { element: element.to_string() },
+            format!("Finding and clicking '{}' for: {}", element, goal.description),
+        ));
+    }
+
+    // Parse: type "text"
+    if let Some(caps) = Regex::new(r#"^type\s+"([^"]+)"$"#).ok().and_then(|re| re.captures(&line)) {
+        let text = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        return Ok(AtomicAction::new(
+            ActionType::TypeText,
+            ActionParams::TypeText { text: text.to_string() },
+            format!("Typing '{}' for: {}", text, goal.description),
+        ));
+    }
+
+    // Parse: type text (without quotes) - preserve original case
+    if let Some(caps) = Regex::new(r"^type\s+(.+)$").ok().and_then(|re| re.captures(&line)) {
+        // Use original line to preserve case
+        let text = if original_line.to_lowercase().starts_with("type ") {
+            original_line[5..].trim()
+        } else {
+            caps.get(1).map(|m| m.as_str().trim()).unwrap_or("")
+        };
+        return Ok(AtomicAction::new(
+            ActionType::TypeText,
+            ActionParams::TypeText { text: text.to_string() },
+            format!("Typing '{}' for: {}", text, goal.description),
+        ));
+    }
+
+    // Parse: key CMD+KEY or key KEY
+    if let Some(caps) = Regex::new(r"^key\s+(.+)$").ok().and_then(|re| re.captures(&line)) {
+        let key_str = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        let (key, modifiers) = parse_key_combo(key_str);
+        return Ok(AtomicAction::new(
+            ActionType::PressKey,
+            ActionParams::PressKey { key, modifiers },
+            format!("Pressing {} for: {}", key_str, goal.description),
+        ));
+    }
+
+    // Parse: wait MS
+    if let Some(caps) = Regex::new(r"^wait\s+(\d+)$").ok().and_then(|re| re.captures(&line)) {
+        let ms: u64 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(500);
+        return Ok(AtomicAction::new(
+            ActionType::Wait,
+            ActionParams::Wait { ms },
+            format!("Waiting {}ms for: {}", ms, goal.description),
+        ));
+    }
+
+    Err(format!(
+        "Could not parse blind action from response: '{}'. Expected: open APP, click ELEMENT, type \"text\", key KEY, or wait MS",
+        line
+    ))
+}
+
+/// Parse click action when we have screen coordinates
+fn parse_click_action(response: &str, goal: &Goal, element: &str) -> Result<AtomicAction, String> {
+    let line = response.lines().next().unwrap_or("").trim().to_lowercase();
+
+    // Parse: click X Y
+    if let Some(caps) = Regex::new(r"^click\s+(\d+)\s+(\d+)$").ok().and_then(|re| re.captures(&line)) {
+        let x: i32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        let y: i32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+        return Ok(AtomicAction::new(
+            ActionType::MouseClick,
+            ActionParams::MouseClick { x, y, button: None },
+            format!("Clicking '{}' at ({}, {}) for: {}", element, x, y, goal.description),
+        ));
+    }
+
+    // not_found response
+    if line.contains("not_found") || line.contains("no match") {
+        return Err(format!("Could not find '{}' on screen", element));
+    }
+
+    Err(format!(
+        "Could not parse click action from response: '{}'. Expected: click X Y or not_found",
+        line
+    ))
 }
 
 /// Parse LLM response into an AtomicAction

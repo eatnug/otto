@@ -1,10 +1,11 @@
 use crate::screenshot;
-use crate::types::{DetectedElement, ScreenState};
+use crate::types::{DetectedElement, ScreenState, UIElement};
 use crate::vision;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::AppHandle;
 
 pub struct Observer;
 
@@ -13,11 +14,11 @@ impl Observer {
         Self
     }
 
-    /// Observe the current screen state
-    pub async fn observe(&self, goal_context: &str) -> Result<ScreenState, String> {
+    /// Observe the current screen state - detect UI elements
+    pub async fn observe(&self, app_handle: &AppHandle, goal_context: &str) -> Result<ScreenState, String> {
         println!("[OBSERVER] Capturing screenshot...");
         // Capture and resize screenshot
-        let (screenshot_bytes, _scale_x, _scale_y) = screenshot::capture_and_resize()
+        let (screenshot_bytes, scale_x, scale_y) = screenshot::capture_and_resize()
             .map_err(|e| {
                 println!("[OBSERVER] Screenshot capture FAILED: {}", e);
                 e
@@ -25,17 +26,35 @@ impl Observer {
         println!("[OBSERVER] Screenshot captured: {} bytes", screenshot_bytes.len());
         let screenshot_hash = hash_bytes(&screenshot_bytes);
 
-        println!("[OBSERVER] Calling vision model (moondream)...");
-        // Get screen description from vision model
-        let description = vision::describe_screen(&screenshot_bytes, goal_context).await
+        println!("[OBSERVER] Calling vision model to detect UI elements...");
+        // Detect UI elements from screenshot
+        let vision_elements = vision::detect_ui_elements(app_handle, &screenshot_bytes, goal_context).await
             .map_err(|e| {
                 println!("[OBSERVER] Vision model FAILED: {}", e);
                 e
             })?;
-        println!("[OBSERVER] Vision response length: {} chars", description.len());
-        if description.is_empty() {
-            println!("[OBSERVER] WARNING: Vision returned empty string!");
-        }
+
+        // Scale coordinates back to original screen size
+        let ui_elements: Vec<UIElement> = vision_elements
+            .into_iter()
+            .map(|e| UIElement {
+                label: e.label,
+                element_type: e.element_type,
+                x1: (e.x1 as f64 * scale_x) as i32,
+                y1: (e.y1 as f64 * scale_y) as i32,
+                x2: (e.x2 as f64 * scale_x) as i32,
+                y2: (e.y2 as f64 * scale_y) as i32,
+            })
+            .collect();
+
+        println!("[OBSERVER] Detected {} UI elements", ui_elements.len());
+
+        // Generate description from elements
+        let description = if ui_elements.is_empty() {
+            "No UI elements detected".to_string()
+        } else {
+            format!("Found {} UI elements", ui_elements.len())
+        };
 
         // Get active app
         let active_app = get_frontmost_app();
@@ -48,6 +67,7 @@ impl Observer {
         Ok(ScreenState {
             timestamp,
             description,
+            ui_elements,
             detected_elements: vec![],
             active_app,
             screenshot_hash,

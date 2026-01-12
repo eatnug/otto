@@ -1,6 +1,7 @@
 use crate::llm;
-use crate::types::{Goal, DecompositionInfo};
+use crate::types::{Goal, DecompositionInfo, LlmCallType};
 use regex::Regex;
+use tauri::AppHandle;
 
 /// Result of decomposition including method info
 pub struct DecomposeResult {
@@ -9,7 +10,7 @@ pub struct DecomposeResult {
 }
 
 /// Decompose a user command into a list of goals
-pub async fn decompose(command: &str) -> Result<DecomposeResult, String> {
+pub async fn decompose(app_handle: &AppHandle, command: &str) -> Result<DecomposeResult, String> {
     println!("[DECOMPOSER] Input command: \"{}\"", command);
 
     // Try pattern matching first (fast path, but still LLM-driven execution)
@@ -30,7 +31,7 @@ pub async fn decompose(command: &str) -> Result<DecomposeResult, String> {
 
     println!("[DECOMPOSER] No pattern matched, using LLM for decomposition");
     // Fall back to LLM for complex commands
-    let goals = decompose_with_llm(command).await?;
+    let goals = decompose_with_llm(app_handle, command).await?;
     Ok(DecomposeResult {
         goals,
         info: DecompositionInfo {
@@ -120,9 +121,9 @@ fn build_search_goals(app: &str, query: &str) -> Vec<Goal> {
 }
 
 /// Use LLM to decompose complex commands
-async fn decompose_with_llm(command: &str) -> Result<Vec<Goal>, String> {
+async fn decompose_with_llm(app_handle: &AppHandle, command: &str) -> Result<Vec<Goal>, String> {
     let prompt = super::prompts::decomposition_prompt(command);
-    let response = llm::call_ollama_raw(&prompt).await?;
+    let response = llm::call_ollama_with_debug(app_handle, &prompt, LlmCallType::Decomposition).await?;
     println!("[DECOMPOSER] LLM response:\n{}", response);
     parse_goals_from_response(&response)
 }
@@ -131,8 +132,16 @@ async fn decompose_with_llm(command: &str) -> Result<Vec<Goal>, String> {
 fn parse_goals_from_response(response: &str) -> Result<Vec<Goal>, String> {
     let mut goals = Vec::new();
 
-    // Pattern: "N. description | success_criteria"
-    let line_pattern = Regex::new(r"^\d+\.\s*(.+?)\s*\|\s*(.+)$")
+    // Primary pattern: "N. description | success_criteria"
+    let pipe_pattern = Regex::new(r"^\d+\.\s*(.+?)\s*\|\s*(.+)$")
+        .map_err(|e| format!("Regex error: {}", e))?;
+
+    // Fallback pattern: "N. description - success_criteria" (common LLM mistake)
+    let dash_pattern = Regex::new(r"^\d+\.\s*(.+?)\s+-\s+(.+)$")
+        .map_err(|e| format!("Regex error: {}", e))?;
+
+    // Simple pattern: "N. description" (generate default success criteria)
+    let simple_pattern = Regex::new(r"^\d+\.\s*(.+)$")
         .map_err(|e| format!("Regex error: {}", e))?;
 
     for line in response.lines() {
@@ -141,7 +150,8 @@ fn parse_goals_from_response(response: &str) -> Result<Vec<Goal>, String> {
             continue;
         }
 
-        if let Some(caps) = line_pattern.captures(line) {
+        // Try pipe separator first (preferred)
+        if let Some(caps) = pipe_pattern.captures(line) {
             let description = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
             let success_criteria = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
 
@@ -149,6 +159,37 @@ fn parse_goals_from_response(response: &str) -> Result<Vec<Goal>, String> {
                 goals.push(Goal::new(
                     description.to_string(),
                     success_criteria.to_string(),
+                ));
+                continue;
+            }
+        }
+
+        // Try dash separator (fallback)
+        if let Some(caps) = dash_pattern.captures(line) {
+            let description = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+            let success_criteria = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+
+            if !description.is_empty() && !success_criteria.is_empty() {
+                goals.push(Goal::new(
+                    description.to_string(),
+                    success_criteria.to_string(),
+                ));
+                continue;
+            }
+        }
+
+        // Try simple pattern (last resort - generate default success criteria)
+        if let Some(caps) = simple_pattern.captures(line) {
+            let description = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+            // Skip if it looks like garbage or meta-text
+            if !description.is_empty()
+                && !description.to_lowercase().contains("no specific")
+                && !description.to_lowercase().contains("goals listed")
+            {
+                let success_criteria = format!("{} is completed", description);
+                goals.push(Goal::new(
+                    description.to_string(),
+                    success_criteria,
                 ));
             }
         }

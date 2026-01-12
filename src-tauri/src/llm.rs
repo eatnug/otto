@@ -1,10 +1,11 @@
-use crate::types::{ActionParams, ActionPlan, ActionStep, ActionType};
+use crate::types::{ActionParams, ActionPlan, ActionStep, ActionType, LlmCallType, LlmDebugEvent, LlmResponseEvent};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-const OLLAMA_TIMEOUT_SECS: u64 = 30;
-const LLM_MODEL: &str = "qwen2.5:0.5b";
+const OLLAMA_TIMEOUT_SECS: u64 = 120;
+pub const LLM_MODEL: &str = "qwen2.5:7b";
 
 #[derive(Serialize)]
 struct OllamaRequest {
@@ -51,6 +52,57 @@ Response: "#,
 /// Raw LLM call - returns the response text directly
 pub async fn call_ollama_raw(prompt: &str) -> Result<String, String> {
     call_ollama(prompt).await
+}
+
+/// Raw LLM call with debug event emission
+pub async fn call_ollama_with_debug(
+    app_handle: &AppHandle,
+    prompt: &str,
+    call_type: LlmCallType,
+) -> Result<String, String> {
+    let call_id = Uuid::new_v4().to_string();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // Emit prompt event
+    let prompt_event = LlmDebugEvent {
+        call_id: call_id.clone(),
+        call_type,
+        model: LLM_MODEL.to_string(),
+        prompt: prompt.to_string(),
+        timestamp,
+    };
+    let _ = app_handle.emit("llm_prompt", &prompt_event);
+
+    // Call LLM and measure time
+    let start = Instant::now();
+    let result = call_ollama(prompt).await;
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    // Emit response event
+    let response_event = match &result {
+        Ok(response) => LlmResponseEvent {
+            call_id,
+            raw_response: response.clone(),
+            parsed_result: None,
+            duration_ms,
+            success: true,
+            error: None,
+        },
+        Err(e) => LlmResponseEvent {
+            call_id,
+            raw_response: String::new(),
+            parsed_result: None,
+            duration_ms,
+            success: false,
+            error: Some(e.clone()),
+        },
+    };
+    let _ = app_handle.emit("llm_response", &response_event);
+
+    result
 }
 
 async fn call_ollama(prompt: &str) -> Result<String, String> {

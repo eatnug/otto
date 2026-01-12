@@ -2,7 +2,7 @@ use crate::computer;
 use crate::types::{ActionParams, ActionPlan, MouseButton};
 use crate::vision;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::time::{sleep, Duration};
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);

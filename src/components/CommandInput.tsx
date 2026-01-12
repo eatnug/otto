@@ -9,7 +9,7 @@ interface Props {
 export function CommandInput({ disabled }: Props) {
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const { setCommand, setState, state, useAgentMode, setError } = useOttoStore()
+  const { setCommand, setState, state, useAgentMode, useAgentV2, setError } = useOttoStore()
 
   // Clear input when returning to idle
   useEffect(() => {
@@ -26,8 +26,11 @@ export function CommandInput({ disabled }: Props) {
     setState('planning')
 
     try {
-      if (useAgentMode) {
-        // New reactive agent mode
+      if (useAgentV2) {
+        // V2: Tool-based agent
+        await invoke('start_agent_v2', { command: input })
+      } else if (useAgentMode) {
+        // V1: Goal-based reactive agent
         await invoke('start_agent', { command: input })
       } else {
         // Legacy plan-and-execute mode
@@ -37,7 +40,7 @@ export function CommandInput({ disabled }: Props) {
       console.error('Failed to execute command:', err)
       setError(String(err))
     }
-  }, [input, setCommand, setState, disabled, useAgentMode, setError])
+  }, [input, setCommand, setState, disabled, useAgentMode, useAgentV2, setError])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {

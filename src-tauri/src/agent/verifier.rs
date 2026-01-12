@@ -1,6 +1,7 @@
 use crate::types::{AtomicAction, Goal, ScreenState, VerificationResult};
 use crate::vision;
 use regex::Regex;
+use tauri::AppHandle;
 use tokio::time::{sleep, Duration};
 
 use super::observer::Observer;
@@ -19,6 +20,7 @@ impl Verifier {
     /// Verify if the goal was achieved after executing an action
     pub async fn verify(
         &self,
+        app_handle: &AppHandle,
         goal: &Goal,
         action: &AtomicAction,
         before_screen: &ScreenState,
@@ -27,10 +29,11 @@ impl Verifier {
         sleep(Duration::from_millis(300)).await;
 
         // Observe new screen state
-        let after_screen = self.observer.observe(&goal.description).await?;
+        let after_screen = self.observer.observe(app_handle, &goal.description).await?;
 
         // Use vision model to verify
-        let verification_response = vision::verify_goal(
+        let verification_response = vision::verify_goal_with_debug(
+            app_handle,
             &goal.description,
             &goal.success_criteria,
             &before_screen.description,

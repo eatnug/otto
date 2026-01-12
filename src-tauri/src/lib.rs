@@ -8,7 +8,7 @@ mod types;
 mod vision;
 mod window;
 
-use agent::AgentOrchestrator;
+use agent::{Agent, AgentOrchestrator};
 use tauri::{AppHandle, Emitter};
 use types::ActionPlan;
 
@@ -53,6 +53,15 @@ async fn start_agent(app: AppHandle, command: String) -> Result<(), String> {
 #[tauri::command]
 fn cancel_agent() {
     agent::orchestrator::cancel_agent();
+    agent::runner::cancel();
+}
+
+// === New Tool-based Agent ===
+
+#[tauri::command]
+async fn start_agent_v2(app: AppHandle, command: String) -> Result<(), String> {
+    let mut agent = Agent::new(app, command);
+    agent.run().await.map(|_| ())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -61,6 +70,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             hotkey::register_global_hotkey(app.handle())?;
+            // Set up window to float above other apps (like Spotlight)
+            if let Err(e) = window::setup_floating_window(app.handle()) {
+                eprintln!("[SETUP] Warning: Failed to setup floating window: {}", e);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -69,7 +82,8 @@ pub fn run() {
             cancel_execution,
             hide_window,
             start_agent,
-            cancel_agent
+            cancel_agent,
+            start_agent_v2
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

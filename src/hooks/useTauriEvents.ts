@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { useOttoStore } from '../store/otto'
-import type { ActionPlan, AgentSession, ScreenState, AtomicAction, ActionResult, VerificationResult, DecompositionInfo } from '../types'
+import type { ActionPlan, AgentSession, AgentSessionV2, ScreenState, AtomicAction, ActionResult, VerificationResult, DecompositionInfo, LlmDebugEvent, LlmResponseEvent, ToolResult } from '../types'
 
 const INPUT_HEIGHT = 88
 const STEP_HEIGHT = 48
@@ -11,22 +11,36 @@ const STEP_HEIGHT = 48
 // Calculate and apply window height directly
 async function updateWindowHeight() {
   const storeState = useOttoStore.getState()
-  const { agentSession, goalPipelineStates, decompositionInfo, useAgentMode, state, plan } = storeState
+  const { agentSession, agentSessionV2, goalPipelineStates, decompositionInfo, useAgentMode, useAgentV2, state, plan } = storeState
   const goals = agentSession?.goals || []
-  const steps = plan?.steps || []
+  const planSteps = agentSessionV2?.plan?.steps || []
+  const legacySteps = plan?.steps || []
 
   let height = INPUT_HEIGHT
 
+  // V2 Agent mode (tool-based)
+  if (useAgentV2 && agentSessionV2) {
+    // Plan steps height
+    height += planSteps.length * STEP_HEIGHT
+    // Status row
+    if (agentSessionV2.state === 'done' || agentSessionV2.state === 'failed') {
+      height += STEP_HEIGHT
+    }
+    // Extra padding during execution
+    if (agentSessionV2.state === 'executing') {
+      height += 24 // For step counter
+    }
+  }
   // Legacy mode states
-  if (state === 'planning') {
+  else if (state === 'planning') {
     height += STEP_HEIGHT
   } else if (state === 'error' && !useAgentMode) {
     height += STEP_HEIGHT
   } else if ((state === 'executing' || state === 'done') && !useAgentMode) {
-    height += steps.length * STEP_HEIGHT
+    height += legacySteps.length * STEP_HEIGHT
     if (state === 'done') height += STEP_HEIGHT
   }
-  // Agent mode
+  // V1 Agent mode (goal-based)
   else if (useAgentMode && goals.length > 0) {
     // Decomposition info height
     if (decompositionInfo) height += 56
@@ -71,7 +85,9 @@ async function updateWindowHeight() {
 export function useTauriEvents() {
   const {
     setPlan, setState, setStepIndex, setError, setDebugLog,
-    setAgentSession, updateGoalPipeline, setDecompositionInfo
+    setAgentSession, updateGoalPipeline, setDecompositionInfo,
+    setAgentSessionV2,
+    addLlmPrompt, addLlmResponse
   } = useOttoStore()
 
   useEffect(() => {
@@ -178,31 +194,57 @@ export function useTauriEvents() {
       unlisteners.push(unlistenGoalsReady)
 
       // Agent session update (main state sync)
-      const unlistenAgentSession = await listen<AgentSession>(
+      // Handles both v1 (goal-based) and v2 (tool-based) formats
+      const unlistenAgentSession = await listen<AgentSession | AgentSessionV2>(
         'agent_session',
         (event) => {
-          setAgentSession(event.payload)
-          // Update pipeline step based on agent state
-          const goalId = event.payload.goals[event.payload.current_goal_index]?.id
-          if (goalId) {
-            const stateToStep: Record<string, 'observing' | 'thinking' | 'acting' | 'verifying' | 'done'> = {
-              observing: 'observing',
-              thinking: 'thinking',
-              acting: 'acting',
-              verifying: 'verifying',
-              complete: 'done',
+          const payload = event.payload as unknown as Record<string, unknown>
+
+          // Detect v2 format by checking for 'task' field (v1 has 'original_command')
+          if ('task' in payload && !('original_command' in payload)) {
+            // V2 format
+            const v2Session = event.payload as AgentSessionV2
+            console.log('[V2] Agent session update:', v2Session.state)
+            setAgentSessionV2(v2Session)
+
+            // Update global state for UI
+            if (v2Session.state === 'done') {
+              setState('done')
+            } else if (v2Session.state === 'failed') {
+              setState('error')
+            } else if (v2Session.state === 'executing') {
+              setState('executing')
+            } else if (v2Session.state === 'planning') {
+              setState('planning')
             }
-            const step = stateToStep[event.payload.state]
-            if (step) {
-              updateGoalPipeline(goalId, { step })
+          } else {
+            // V1 format
+            const v1Session = event.payload as AgentSession
+            setAgentSession(v1Session)
+
+            // Update pipeline step based on agent state
+            const goalId = v1Session.goals[v1Session.current_goal_index]?.id
+            if (goalId) {
+              const stateToStep: Record<string, 'observing' | 'thinking' | 'acting' | 'verifying' | 'done'> = {
+                observing: 'observing',
+                thinking: 'thinking',
+                acting: 'acting',
+                verifying: 'verifying',
+                complete: 'done',
+              }
+              const step = stateToStep[v1Session.state]
+              if (step) {
+                updateGoalPipeline(goalId, { step })
+              }
+            }
+            // Also update global state for UI consistency
+            if (v1Session.state === 'complete') {
+              setState('done')
+            } else if (v1Session.state === 'error') {
+              setState('error')
             }
           }
-          // Also update global state for UI consistency
-          if (event.payload.state === 'complete') {
-            setState('done')
-          } else if (event.payload.state === 'error') {
-            setState('error')
-          }
+
           // Resize window immediately
           setTimeout(() => updateWindowHeight(), 10)
         }
@@ -343,6 +385,71 @@ export function useTauriEvents() {
         }
       )
       unlisteners.push(unlistenAgentError)
+
+      // ============================================
+      // LLM Debug Events
+      // ============================================
+
+      // LLM prompt sent
+      const unlistenLlmPrompt = await listen<LlmDebugEvent>(
+        'llm_prompt',
+        (event) => {
+          addLlmPrompt(event.payload)
+        }
+      )
+      unlisteners.push(unlistenLlmPrompt)
+
+      // LLM response received
+      const unlistenLlmResponse = await listen<LlmResponseEvent>(
+        'llm_response',
+        (event) => {
+          addLlmResponse(event.payload)
+        }
+      )
+      unlisteners.push(unlistenLlmResponse)
+
+      // ============================================
+      // V2 Agent Events (Tool-based)
+      // ============================================
+
+      // V2 agent uses the same 'agent_session' event name but with different payload
+      // The listener above handles v1 format, we need to detect v2 format
+      // V2 format has: { id, task, state, plan, step_count, error }
+      // V1 format has: { id, original_command, goals, ... }
+
+      // We'll add a separate check in the agent_session listener
+      // For now, the v2 agent also emits 'agent_session' - we detect by checking for 'task' field
+
+      // Agent done (v2)
+      const unlistenAgentDone = await listen<string>(
+        'agent_done',
+        (event) => {
+          console.log('[V2] Agent done:', event.payload)
+          setState('done')
+          setTimeout(() => updateWindowHeight(), 10)
+        }
+      )
+      unlisteners.push(unlistenAgentDone)
+
+      // Agent failed (v2)
+      const unlistenAgentFailed = await listen<string>(
+        'agent_failed',
+        (event) => {
+          console.log('[V2] Agent failed:', event.payload)
+          setError(event.payload)
+          setTimeout(() => updateWindowHeight(), 10)
+        }
+      )
+      unlisteners.push(unlistenAgentFailed)
+
+      // Tool result (v2) - for debugging
+      const unlistenToolResult = await listen<ToolResult>(
+        'tool_result',
+        (event) => {
+          console.log('[V2] Tool result:', event.payload)
+        }
+      )
+      unlisteners.push(unlistenToolResult)
     }
 
     setupListeners()
@@ -351,5 +458,5 @@ export function useTauriEvents() {
       unlisteners.forEach((unlisten) => unlisten())
       unsubscribe()
     }
-  }, [setPlan, setState, setStepIndex, setError, setDebugLog, setAgentSession, updateGoalPipeline, setDecompositionInfo])
+  }, [setPlan, setState, setStepIndex, setError, setDebugLog, setAgentSession, updateGoalPipeline, setDecompositionInfo, setAgentSessionV2, addLlmPrompt, addLlmResponse])
 }

@@ -338,3 +338,411 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
 }
+
+/* ============================================
+   Debug Mode Styles
+   ============================================ */
+
+.overlay.debug-mode {
+  width: 900px;
+  height: 600px;
+}
+
+.debug-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* LLM Call List (Left Panel) */
+.llm-call-list {
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.llm-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.btn-clear {
+  font-size: 10px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.btn-clear:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+}
+
+.llm-list-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.llm-call-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-size: 11px;
+}
+
+.llm-call-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.llm-call-item.selected {
+  background: rgba(124, 92, 255, 0.15);
+  border-left: 2px solid var(--accent);
+}
+
+.llm-call-item.pending {
+  opacity: 0.7;
+}
+
+.call-type-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.call-type-badge.decomposition {
+  background: rgba(124, 92, 255, 0.2);
+  color: var(--accent);
+}
+
+.call-type-badge.screen_description {
+  background: rgba(48, 209, 88, 0.2);
+  color: var(--success);
+}
+
+.call-type-badge.action_decision {
+  background: rgba(255, 159, 10, 0.2);
+  color: #ff9f0a;
+}
+
+.call-type-badge.verification {
+  background: rgba(10, 132, 255, 0.2);
+  color: #0a84ff;
+}
+
+.call-type-badge.find_element {
+  background: rgba(191, 90, 242, 0.2);
+  color: #bf5af2;
+}
+
+.call-model {
+  flex: 1;
+  color: var(--text-muted);
+  font-family: 'SF Mono', monospace;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-status {
+  font-size: 11px;
+}
+
+.call-status.success {
+  color: var(--success);
+}
+
+.call-status.error {
+  color: var(--error);
+}
+
+.call-status.pending {
+  color: var(--text-muted);
+}
+
+.call-duration {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', monospace;
+}
+
+.llm-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* LLM Detail Panel (Right Panel) */
+.llm-detail-panel {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--bg-step);
+}
+
+.llm-detail-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.llm-call-detail {
+  padding: 16px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.call-status-badge {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.call-status-badge.pending {
+  background: rgba(255, 159, 10, 0.2);
+  color: #ff9f0a;
+}
+
+.call-status-badge.success {
+  background: rgba(48, 209, 88, 0.2);
+  color: var(--success);
+}
+
+.call-status-badge.error {
+  background: rgba(255, 69, 58, 0.2);
+  color: var(--error);
+}
+
+.detail-section {
+  margin-bottom: 16px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.section-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.section-actions button {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.section-actions button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-secondary);
+}
+
+.detail-content {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  border-radius: 6px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.detail-content.success {
+  border-left: 2px solid var(--success);
+}
+
+.detail-content.error {
+  border-left: 2px solid var(--error);
+  color: var(--error);
+}
+
+.more-indicator {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.detail-section.error .section-header {
+  color: var(--error);
+}
+
+/* ============================================
+   V2 Plan Progress
+   ============================================ */
+
+.plan-progress {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 24px;
+  background: var(--bg-step);
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  animation: fadeIn 0.15s ease-out;
+}
+
+.plan-step.current {
+  color: var(--text-primary);
+  background: rgba(124, 92, 255, 0.08);
+}
+
+.plan-step.done {
+  color: var(--text-muted);
+}
+
+.plan-step.failed {
+  color: var(--error);
+}
+
+.plan-step.in_progress {
+  color: var(--text-primary);
+  background: rgba(124, 92, 255, 0.08);
+}
+
+.step-number {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  color: var(--text-muted);
+}
+
+.plan-step.current .step-number,
+.plan-step.in_progress .step-number {
+  background: var(--accent);
+  color: white;
+}
+
+.plan-step.done .step-number {
+  background: var(--success);
+  color: white;
+}
+
+.plan-step.failed .step-number {
+  background: var(--error);
+  color: white;
+}
+
+.step-desc {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step-status {
+  font-size: 12px;
+  width: 20px;
+  text-align: center;
+}
+
+.step-status.done {
+  color: var(--success);
+}
+
+.step-status.in_progress {
+  color: var(--accent);
+}
+
+.step-status.failed {
+  color: var(--error);
+}
+
+.step-counter {
+  padding: 8px 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-step);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.plan-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 24px;
+  font-size: 13px;
+  color: var(--success);
+  background: rgba(48, 209, 88, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.plan-done::before {
+  content: '✓';
+}
+
+.plan-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 24px;
+  font-size: 13px;
+  color: var(--error);
+  background: rgba(255, 69, 58, 0.08);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.plan-error::before {
+  content: '✕';
+}

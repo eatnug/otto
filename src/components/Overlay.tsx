@@ -1,22 +1,31 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useOttoStore } from '../store/otto'
 import { useTauriEvents } from '../hooks/useTauriEvents'
 import { CommandInput } from './CommandInput'
+import type { LlmCallType } from '../types'
+
+// Format call type for display
+function formatCallType(type: LlmCallType): string {
+  const labels: Record<LlmCallType, string> = {
+    decomposition: 'Decompose',
+    screen_description: 'Vision',
+    action_decision: 'Think',
+    verification: 'Verify',
+    find_element: 'Find',
+  }
+  return labels[type] || type
+}
 
 export function Overlay() {
   useTauriEvents()
   const {
-    state, error, plan, currentStepIndex, reset, debugLogs,
-    agentSession, useAgentMode, goalPipelineStates, decompositionInfo
+    state, agentSession, agentSessionV2, useAgentMode, useAgentV2,
+    llmCalls, selectedLlmCall, selectLlmCall, clearLlmCalls
   } = useOttoStore()
 
-  const steps = plan?.steps || []
-  const goals = agentSession?.goals || []
-
-  const handleConfirm = () => {
-    reset()
-  }
+  const [expandedPrompt, setExpandedPrompt] = useState(false)
+  const [expandedResponse, setExpandedResponse] = useState(false)
 
   const handleMouseDown = useCallback(async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement
@@ -26,200 +35,182 @@ export function Overlay() {
     await getCurrentWindow().startDragging()
   }, [])
 
-  // Pipeline step labels
-  const pipelineStepLabels: Record<string, string> = {
-    observing: '👁 Observing',
-    thinking: '🧠 Thinking',
-    acting: '⚡ Acting',
-    verifying: '✓ Verifying',
-    done: '✓ Done',
-  }
+  // Get sorted LLM calls by timestamp
+  const sortedLlmCalls = Object.values(llmCalls).sort((a, b) => a.timestamp - b.timestamp)
+  const selectedCall = selectedLlmCall ? llmCalls[selectedLlmCall] : null
 
-  // Render agent mode UI
-  const renderAgentMode = () => {
-    if (!agentSession) return null
+  // Render LLM call list
+  const renderLlmCallList = () => (
+    <div className="llm-call-list">
+      <div className="llm-list-header">
+        <span>LLM Calls ({sortedLlmCalls.length})</span>
+        {sortedLlmCalls.length > 0 && (
+          <button className="btn-clear" onClick={clearLlmCalls}>Clear</button>
+        )}
+      </div>
+      <div className="llm-list-items">
+        {sortedLlmCalls.map((call) => (
+          <div
+            key={call.id}
+            className={`llm-call-item ${call.status} ${selectedLlmCall === call.id ? 'selected' : ''}`}
+            onClick={() => selectLlmCall(call.id)}
+          >
+            <span className={`call-type-badge ${call.type}`}>{formatCallType(call.type)}</span>
+            <span className="call-model">{call.model}</span>
+            <span className={`call-status ${call.status}`}>
+              {call.status === 'pending' ? '...' : call.status === 'success' ? '✓' : '✕'}
+            </span>
+            {call.duration_ms && (
+              <span className="call-duration">{call.duration_ms}ms</span>
+            )}
+          </div>
+        ))}
+        {sortedLlmCalls.length === 0 && (
+          <div className="llm-empty">No LLM calls yet</div>
+        )}
+      </div>
+    </div>
+  )
 
-    const currentGoalIndex = agentSession.current_goal_index
-    const agentState = agentSession.state
+  // Render LLM call detail
+  const renderLlmCallDetail = () => {
+    if (!selectedCall) {
+      return (
+        <div className="llm-detail-empty">
+          Select an LLM call to view details
+        </div>
+      )
+    }
+
+    const promptLines = selectedCall.prompt.split('\n')
+    const responseLines = (selectedCall.raw_response || '').split('\n')
+    const maxCollapsedLines = 10
 
     return (
-      <>
-        {/* Decomposition info */}
-        {decompositionInfo && (
-          <div className="decomposition-info">
-            <div className="decomposition-header">
-              <span className="decomposition-method">
-                {decompositionInfo.method === 'pattern' ? '⚡ Pattern Match' : '🤖 LLM Decomposed'}
-              </span>
-              {decompositionInfo.pattern_name && (
-                <span className="decomposition-pattern">{decompositionInfo.pattern_name}</span>
+      <div className="llm-call-detail">
+        <div className="detail-header">
+          <span className={`call-type-badge ${selectedCall.type}`}>{formatCallType(selectedCall.type)}</span>
+          <span className="call-model">{selectedCall.model}</span>
+          {selectedCall.duration_ms && (
+            <span className="call-duration">{selectedCall.duration_ms}ms</span>
+          )}
+          <span className={`call-status-badge ${selectedCall.status}`}>
+            {selectedCall.status}
+          </span>
+        </div>
+
+        {/* Prompt */}
+        <div className="detail-section">
+          <div className="section-header">
+            <span>Prompt</span>
+            <div className="section-actions">
+              <button onClick={() => navigator.clipboard.writeText(selectedCall.prompt)}>Copy</button>
+              {promptLines.length > maxCollapsedLines && (
+                <button onClick={() => setExpandedPrompt(!expandedPrompt)}>
+                  {expandedPrompt ? 'Collapse' : 'Expand'}
+                </button>
               )}
             </div>
-            <div className="decomposition-command">
-              "{decompositionInfo.original_command}" → {goals.length} tasks
-            </div>
           </div>
-        )}
+          <pre className="detail-content">
+            {expandedPrompt
+              ? selectedCall.prompt
+              : promptLines.slice(0, maxCollapsedLines).join('\n')
+            }
+            {!expandedPrompt && promptLines.length > maxCollapsedLines && (
+              <span className="more-indicator">
+                {'\n'}... ({promptLines.length - maxCollapsedLines} more lines)
+              </span>
+            )}
+          </pre>
+        </div>
 
-        {/* Goals list */}
-        {goals.map((goal, idx) => {
-          const isCompleted = goal.status === 'completed'
-          const isFailed = goal.status === 'failed'
-          const isCurrent = idx === currentGoalIndex && goal.status === 'in_progress'
-          const isPending = goal.status === 'pending'
-          const pipeline = goalPipelineStates[goal.id]
-
-          return (
-            <div
-              key={goal.id}
-              className={`goal-row ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''} ${isFailed ? 'failed' : ''}`}
-            >
-              <div className="goal-header">
-                {isCurrent && <div className="spinner" />}
-                {isCompleted && <span className="step-icon success">✓</span>}
-                {isFailed && <span className="step-icon error">✕</span>}
-                {isPending && <span className="step-icon pending">○</span>}
-                <span className="goal-text">{goal.description}</span>
-                {isCurrent && goal.attempts > 0 && (
-                  <span className="retry-badge">retry {goal.attempts}</span>
+        {/* Response */}
+        {selectedCall.raw_response !== undefined && (
+          <div className="detail-section">
+            <div className="section-header">
+              <span>Response</span>
+              <div className="section-actions">
+                <button onClick={() => navigator.clipboard.writeText(selectedCall.raw_response || '')}>Copy</button>
+                {responseLines.length > maxCollapsedLines && (
+                  <button onClick={() => setExpandedResponse(!expandedResponse)}>
+                    {expandedResponse ? 'Collapse' : 'Expand'}
+                  </button>
                 )}
               </div>
-
-              {/* Pipeline details - show for current and completed goals */}
-              {pipeline && (isCurrent || isCompleted || isFailed) && (
-                <div className="pipeline-info">
-                  {/* Step indicator */}
-                  <div className="pipeline-header">
-                    <span className="pipeline-step">{pipelineStepLabels[pipeline.step] || pipeline.step}</span>
-                  </div>
-
-                  {/* Observe: what did vision see */}
-                  {pipeline.observation && (
-                    <div className="pipeline-row">
-                      <span className="pipeline-label">👁 Observed:</span>
-                      <span className="pipeline-value">{pipeline.observation.slice(0, 80)}</span>
-                    </div>
-                  )}
-
-                  {/* Think: what action was decided */}
-                  {pipeline.actionType && (
-                    <div className="pipeline-row">
-                      <span className="pipeline-label">🧠 Decided:</span>
-                      <span className="pipeline-value">
-                        <span className="action-type">{pipeline.actionType}</span>
-                        {pipeline.actionParams && <span className="action-params">{pipeline.actionParams}</span>}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Act: execution result */}
-                  {pipeline.actionResult && (
-                    <div className="pipeline-row">
-                      <span className="pipeline-label">⚡ Result:</span>
-                      <span className={`pipeline-value ${pipeline.actionResult}`}>
-                        {pipeline.actionResult === 'success' ? '✓ Success' : `✕ Failed${pipeline.actionError ? `: ${pipeline.actionError}` : ''}`}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Verify: did it work */}
-                  {pipeline.verification && (
-                    <div className="pipeline-row">
-                      <span className="pipeline-label">✓ Verified:</span>
-                      <span className={`pipeline-value ${pipeline.verified ? 'success' : 'failed'}`}>
-                        {pipeline.verified ? '✓ Goal achieved' : pipeline.verification}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
-          )
-        })}
-
-        {/* Error state */}
-        {agentState === 'error' && agentSession.error && (
-          <div className="step-row error">
-            <span className="step-icon">✕</span>
-            <span className="step-text">{agentSession.error}</span>
-            <button className="btn-ok" onClick={handleConfirm}>OK</button>
+            <pre className={`detail-content ${selectedCall.success ? 'success' : 'error'}`}>
+              {expandedResponse
+                ? selectedCall.raw_response
+                : responseLines.slice(0, maxCollapsedLines).join('\n')
+              }
+              {!expandedResponse && responseLines.length > maxCollapsedLines && (
+                <span className="more-indicator">
+                  {'\n'}... ({responseLines.length - maxCollapsedLines} more lines)
+                </span>
+              )}
+            </pre>
           </div>
         )}
 
-        {/* Done state */}
-        {agentState === 'complete' && (
-          <div className="step-row done">
-            <span className="step-icon success">✓</span>
-            <span className="step-text">All goals completed</span>
-            <button className="btn-ok" onClick={handleConfirm}>OK</button>
+        {/* Error */}
+        {selectedCall.error && (
+          <div className="detail-section error">
+            <div className="section-header">Error</div>
+            <pre className="detail-content error">{selectedCall.error}</pre>
           </div>
         )}
-      </>
+      </div>
     )
   }
 
-  // Render legacy mode UI
-  const renderLegacyMode = () => (
-    <>
-      {state === 'planning' && (
-        <div className="step-row">
-          <div className="spinner" />
-          <span>Processing...</span>
-        </div>
-      )}
-
-      {state === 'error' && (
-        <div className="step-row error">
-          <span className="step-icon">✕</span>
-          <span className="step-text">{error}</span>
-          <button className="btn-ok" onClick={handleConfirm}>OK</button>
-        </div>
-      )}
-
-      {(state === 'executing' || state === 'done') && steps.map((step, idx) => {
-        const isCompleted = idx < currentStepIndex || state === 'done'
-        const isCurrent = idx === currentStepIndex && state === 'executing'
-        const debugLog = debugLogs[idx]
-
-        return (
-          <div
-            key={step.id}
-            className={`step-row ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''}`}
-          >
-            {isCurrent && <div className="spinner" />}
-            {isCompleted && <span className="step-icon success">✓</span>}
-            {!isCurrent && !isCompleted && <span className="step-icon pending">○</span>}
-            <span className="step-text">
-              {step.description}
-              {debugLog && <span className="debug-info"> [{debugLog}]</span>}
-            </span>
-          </div>
-        )
-      })}
-
-      {state === 'done' && (
-        <div className="step-row done">
-          <span className="step-icon success">✓</span>
-          <span className="step-text">Complete</span>
-          <button className="btn-ok" onClick={handleConfirm}>OK</button>
-        </div>
-      )}
-    </>
-  )
-
   return (
-    <div className="overlay">
+    <div className="overlay debug-mode">
       <div className="drag-handle" onMouseDown={handleMouseDown}>
         <div className="drag-indicator" />
       </div>
       <CommandInput disabled={
         state === 'planning' ||
         state === 'executing' ||
-        (useAgentMode && agentSession !== null && agentSession.state !== 'complete' && agentSession.state !== 'error')
+        (useAgentV2 && agentSessionV2 !== null && agentSessionV2.state !== 'done' && agentSessionV2.state !== 'failed') ||
+        (useAgentMode && !useAgentV2 && agentSession !== null && agentSession.state !== 'complete' && agentSession.state !== 'error')
       } />
 
-      <div className="results">
-        {useAgentMode && agentSession ? renderAgentMode() : renderLegacyMode()}
+      {/* V2 Plan Progress */}
+      {useAgentV2 && agentSessionV2?.plan && (
+        <div className="plan-progress">
+          {agentSessionV2.plan.steps.map((step, idx) => (
+            <div
+              key={step.id}
+              className={`plan-step ${step.status} ${idx === agentSessionV2.plan!.current_step ? 'current' : ''}`}
+            >
+              <span className="step-number">{idx + 1}</span>
+              <span className="step-desc">{step.description}</span>
+              <span className={`step-status ${step.status}`}>
+                {step.status === 'done' ? '✓' : step.status === 'in_progress' ? '...' : step.status === 'failed' ? '✕' : ''}
+              </span>
+            </div>
+          ))}
+          {agentSessionV2.state === 'executing' && (
+            <div className="step-counter">Steps: {agentSessionV2.step_count}</div>
+          )}
+          {agentSessionV2.state === 'done' && (
+            <div className="plan-done">Done</div>
+          )}
+          {agentSessionV2.state === 'failed' && agentSessionV2.error && (
+            <div className="plan-error">{agentSessionV2.error}</div>
+          )}
+        </div>
+      )}
+
+      <div className="debug-container">
+        {/* Left: LLM Call List */}
+        {renderLlmCallList()}
+
+        {/* Right: LLM Call Detail */}
+        <div className="llm-detail-panel">
+          {renderLlmCallDetail()}
+        </div>
       </div>
     </div>
   )

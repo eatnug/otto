@@ -6,6 +6,8 @@ pub fn decomposition_prompt(command: &str) -> String {
     format!(
         r#"Break command into goals. FORMAT: "N. what to do | how to know it worked"
 
+IMPORTANT: Always use | as separator, NOT - or :
+
 Command: open safari
 Goals:
 1. Open Safari browser | Safari window is visible
@@ -17,12 +19,15 @@ Goals:
 3. Type "rust" | Text appears in URL bar
 4. Press Enter | Search results page loads
 
-Command: open finder and search for notes
+Command: check slack and read messages from John
 Goals:
-1. Open Finder | Finder window is visible
-2. Open search (CMD+F) | Search field is active
-3. Type "notes" | Text appears in search
-4. Press Enter | Search results shown
+1. Open Slack | Slack window is visible
+2. Find John's messages | John's message is visible on screen
+
+Command: open messages and see what mom said
+Goals:
+1. Open Messages | Messages app is visible
+2. Find conversation with mom | Mom's conversation is shown
 
 Command: {}
 Goals:

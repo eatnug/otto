@@ -72,6 +72,29 @@ impl Goal {
 // Screen Observation
 // ============================================
 
+/// UI element detected by vision model with bounding box
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UIElement {
+    pub label: String,
+    pub element_type: String,  // button, text_field, menu, icon, link, tab, checkbox
+    pub x1: i32,  // top-left x
+    pub y1: i32,  // top-left y
+    pub x2: i32,  // bottom-right x
+    pub y2: i32,  // bottom-right y
+}
+
+impl UIElement {
+    /// Get center point of the element
+    pub fn center(&self) -> (i32, i32) {
+        ((self.x1 + self.x2) / 2, (self.y1 + self.y2) / 2)
+    }
+
+    /// Get width and height
+    pub fn size(&self) -> (i32, i32) {
+        ((self.x2 - self.x1).abs(), (self.y2 - self.y1).abs())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectedElement {
     pub description: String,
@@ -82,8 +105,9 @@ pub struct DetectedElement {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenState {
     pub timestamp: u64,
-    pub description: String,
-    pub detected_elements: Vec<DetectedElement>,
+    pub description: String,           // Summary (for legacy compatibility)
+    pub ui_elements: Vec<UIElement>,   // Detected UI elements with coordinates
+    pub detected_elements: Vec<DetectedElement>,  // Legacy
     pub active_app: Option<String>,
     pub screenshot_hash: String,
 }
@@ -98,10 +122,30 @@ impl ScreenState {
         Self {
             timestamp,
             description,
+            ui_elements: vec![],
             detected_elements: vec![],
             active_app: None,
             screenshot_hash: String::new(),
         }
+    }
+
+    /// Format UI elements as a string for the thinker
+    pub fn format_ui_elements(&self) -> String {
+        if self.ui_elements.is_empty() {
+            return "No UI elements detected".to_string();
+        }
+
+        self.ui_elements
+            .iter()
+            .map(|e| {
+                let (cx, cy) = e.center();
+                format!(
+                    "- {} '{}' at ({}, {}) to ({}, {}) [center: {}, {}]",
+                    e.element_type, e.label, e.x1, e.y1, e.x2, e.y2, cx, cy
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -258,4 +302,37 @@ impl From<Option<&str>> for MouseButton {
             _ => MouseButton::Left,
         }
     }
+}
+
+// ============================================
+// LLM Debug Events
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmCallType {
+    Decomposition,
+    ScreenDescription,
+    ActionDecision,
+    Verification,
+    FindElement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmDebugEvent {
+    pub call_id: String,
+    pub call_type: LlmCallType,
+    pub model: String,
+    pub prompt: String,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmResponseEvent {
+    pub call_id: String,
+    pub raw_response: String,
+    pub parsed_result: Option<String>,
+    pub duration_ms: u64,
+    pub success: bool,
+    pub error: Option<String>,
 }

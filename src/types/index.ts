@@ -137,6 +137,98 @@ export interface AgentSession {
 }
 
 // ============================================
+// LLM Debug Types
+// ============================================
+
+export type LlmCallType =
+  | 'decomposition'
+  | 'screen_description'
+  | 'action_decision'
+  | 'verification'
+  | 'find_element'
+
+export interface LlmDebugEvent {
+  call_id: string
+  call_type: LlmCallType
+  model: string
+  prompt: string
+  timestamp: number
+}
+
+export interface LlmResponseEvent {
+  call_id: string
+  raw_response: string
+  parsed_result?: string
+  duration_ms: number
+  success: boolean
+  error?: string
+}
+
+export interface LlmCallEntry {
+  id: string
+  type: LlmCallType
+  model: string
+  prompt: string
+  timestamp: number
+  // Response fields (filled when response arrives)
+  raw_response?: string
+  parsed_result?: string
+  duration_ms?: number
+  success?: boolean
+  error?: string
+  status: 'pending' | 'success' | 'error'
+}
+
+// ============================================
+// New Tool-based Agent Types (v2)
+// ============================================
+
+export type AgentStateV2 = 'idle' | 'planning' | 'executing' | 'done' | 'failed'
+
+export type StepStatus = 'pending' | 'in_progress' | 'done' | 'failed'
+
+export interface PlanStep {
+  id: number
+  description: string
+  status: StepStatus
+}
+
+export interface Plan {
+  task: string
+  steps: PlanStep[]
+  current_step: number
+}
+
+export interface UIElement {
+  label: string
+  element_type: string
+  x: number
+  y: number
+}
+
+export interface ToolOutput {
+  type: 'screenshot' | 'ack'
+  elements?: UIElement[]
+  active_app?: string
+}
+
+export interface ToolResult {
+  tool: string
+  success: boolean
+  output?: ToolOutput
+  error?: string
+}
+
+export interface AgentSessionV2 {
+  id: string
+  task: string
+  state: AgentStateV2
+  plan: Plan | null
+  step_count: number
+  error?: string
+}
+
+// ============================================
 // Store Interface
 // ============================================
 
@@ -149,11 +241,19 @@ export interface OttoStore {
   error: string | null
   debugLogs: Record<number, string>
 
-  // New agent state
+  // New agent state (v1 - goal-based)
   agentSession: AgentSession | null
   useAgentMode: boolean
   goalPipelineStates: Record<string, GoalPipelineState>  // goalId -> pipeline state
   decompositionInfo: DecompositionInfo | null
+
+  // New agent state (v2 - tool-based)
+  agentSessionV2: AgentSessionV2 | null
+  useAgentV2: boolean
+
+  // Debug state
+  llmCalls: Record<string, LlmCallEntry>  // call_id -> entry
+  selectedLlmCall: string | null
 
   // Legacy actions
   setCommand: (cmd: string) => void
@@ -164,10 +264,20 @@ export interface OttoStore {
   setError: (err: string) => void
   reset: () => void
 
-  // New agent actions
+  // New agent actions (v1)
   setAgentSession: (session: AgentSession) => void
   updateGoal: (goalId: string, updates: Partial<Goal>) => void
   setUseAgentMode: (use: boolean) => void
   updateGoalPipeline: (goalId: string, updates: Partial<GoalPipelineState>) => void
   setDecompositionInfo: (info: DecompositionInfo) => void
+
+  // New agent actions (v2)
+  setAgentSessionV2: (session: AgentSessionV2) => void
+  setUseAgentV2: (use: boolean) => void
+
+  // Debug actions
+  addLlmPrompt: (event: LlmDebugEvent) => void
+  addLlmResponse: (event: LlmResponseEvent) => void
+  selectLlmCall: (callId: string | null) => void
+  clearLlmCalls: () => void
 }
